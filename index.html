@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLE MIDI Controller</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1a2234;
+            --accent: #00d4aa;
+            --accent-glow: rgba(0, 212, 170, 0.3);
+            --accent-secondary: #7c3aed;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #2d3748;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-primary);
+            min-height: 100vh;
+            color: var(--text-primary);
+            overflow-x: hidden;
+        }
+
+        /* Animated background */
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(124, 58, 237, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(0, 212, 170, 0.1) 0%, transparent 50%),
+                linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+        }
+
+        .grid-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background-image: 
+                linear-gradient(rgba(45, 55, 72, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(45, 55, 72, 0.3) 1px, transparent 1px);
+            background-size: 60px 60px;
+            animation: gridMove 20s linear infinite;
+        }
+
+        @keyframes gridMove {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(60px); }
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            font-weight: 300;
+            margin-top: 8px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 24px;
+            backdrop-filter: blur(10px);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .card-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .card-icon.bluetooth {
+            background: rgba(0, 212, 170, 0.15);
+            color: var(--accent);
+        }
+
+        .card-icon.write {
+            background: rgba(124, 58, 237, 0.15);
+            color: var(--accent-secondary);
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            transition: background 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+            box-shadow: 0 0 12px var(--success);
+        }
+
+        .status-dot.connecting {
+            background: var(--warning);
+            animation: pulse 1s ease infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .btn {
+            width: 100%;
+            padding: 16px 24px;
+            border: none;
+            border-radius: 12px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent) 0%, #00b894 100%);
+            color: var(--bg-primary);
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 28px var(--accent-glow);
+        }
+
+        .btn-primary:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, var(--accent-secondary) 0%, #6d28d9 100%);
+            color: white;
+            box-shadow: 0 4px 20px rgba(124, 58, 237, 0.3);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 28px rgba(124, 58, 237, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-disconnect {
+            background: linear-gradient(135deg, var(--error) 0%, #dc2626 100%);
+            color: white;
+            box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 14px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.95rem;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        input[type="text"]::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.5;
+        }
+
+        .log-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+
+        .log-entry {
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(45, 55, 72, 0.5);
+            display: flex;
+            gap: 10px;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            opacity: 0.6;
+        }
+
+        .log-message {
+            color: var(--text-secondary);
+        }
+
+        .log-message.success {
+            color: var(--success);
+        }
+
+        .log-message.error {
+            color: var(--error);
+        }
+
+        .log-message.info {
+            color: var(--accent);
+        }
+
+        .service-info {
+            margin-top: 20px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+        }
+
+        .service-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            color: var(--text-secondary);
+        }
+
+        .service-info-row span:first-child {
+            opacity: 0.6;
+        }
+
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .card {
+                padding: 24px;
+            }
+            
+            .input-row {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+    <div class="grid-overlay"></div>
+    
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="logo-icon">🎹</div>
+            </div>
+            <h1>BLE MIDI Controller</h1>
+            <p class="subtitle">Подключение к MIDI устройствам через Bluetooth</p>
+        </header>
+
+        <!-- Connection Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon bluetooth">📡</div>
+                <h2 class="card-title">Подключение</h2>
+            </div>
+            
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Не подключено</span>
+            </div>
+            
+            <button class="btn btn-primary" id="connectBtn" onclick="connectDevice()">
+                <span>🔍</span>
+                <span>Найти устройство</span>
+            </button>
+            
+            <div class="service-info" id="deviceInfo" style="display: none;">
+                <div class="service-info-row">
+                    <span>Устройство:</span>
+                    <span id="deviceName">—</span>
+                </div>
+                <div class="service-info-row">
+                    <span>Сервис:</span>
+                    <span id="serviceName">MIDI Service</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Write Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon write">✏️</div>
+                <h2 class="card-title">Запись данных</h2>
+            </div>
+            
+            <div class="input-group">
+                <label>Значение для записи (hex байты через пробел)</label>
+                <div class="input-row">
+                    <input type="text" id="writeValue" placeholder="90 3C 7F" value="90 3C 7F">
+                </div>
+            </div>
+            
+            <button class="btn btn-secondary" id="writeBtn" onclick="writeCharacteristic()" disabled>
+                <span>📤</span>
+                <span>Записать значение</span>
+            </button>
+        </div>
+
+        <!-- Log Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon bluetooth">📋</div>
+                <h2 class="card-title">Журнал событий</h2>
+            </div>
+            
+            <div class="log-container" id="logContainer">
+                <div class="log-entry">
+                    <span class="log-time">--:--:--</span>
+                    <span class="log-message info">Готов к подключению</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // BLE MIDI Service UUID
+        const MIDI_SERVICE_UUID = '03b80e5a-ede8-4b33-a751-6ce34ec4c700';
+        // BLE MIDI Characteristic UUID  
+        const MIDI_CHARACTERISTIC_UUID = '7772e5db-3868-4112-a1a9-f2669d106bf3';
+
+        let device = null;
+        let server = null;
+        let service = null;
+        let characteristic = null;
+
+        function log(message, type = 'info') {
+            const container = document.getElementById('logContainer');
+            const time = new Date().toLocaleTimeString('ru-RU');
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="log-message ${type}">${message}</span>
+            `;
+            
+            container.insertBefore(entry, container.firstChild);
+            
+            // Limit log entries
+            while (container.children.length > 50) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        function updateStatus(connected, connecting = false) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const connectBtn = document.getElementById('connectBtn');
+            const writeBtn = document.getElementById('writeBtn');
+            const deviceInfo = document.getElementById('deviceInfo');
+            
+            dot.classList.remove('connected', 'connecting');
+            
+            if (connecting) {
+                dot.classList.add('connecting');
+                text.textContent = 'Подключение...';
+                connectBtn.disabled = true;
+            } else if (connected) {
+                dot.classList.add('connected');
+                text.textContent = 'Подключено';
+                connectBtn.innerHTML = '<span>❌</span><span>Отключиться</span>';
+                connectBtn.classList.remove('btn-primary');
+                connectBtn.classList.add('btn-disconnect');
+                connectBtn.disabled = false;
+                connectBtn.onclick = disconnectDevice;
+                writeBtn.disabled = false;
+                deviceInfo.style.display = 'block';
+            } else {
+                text.textContent = 'Не подключено';
+                connectBtn.innerHTML = '<span>🔍</span><span>Найти устройство</span>';
+                connectBtn.classList.remove('btn-disconnect');
+                connectBtn.classList.add('btn-primary');
+                connectBtn.disabled = false;
+                connectBtn.onclick = connectDevice;
+                writeBtn.disabled = true;
+                deviceInfo.style.display = 'none';
+            }
+        }
+
+        async function connectDevice() {
+            try {
+                log('Поиск BLE устройств...', 'info');
+                updateStatus(false, true);
+                
+                // Request device with MIDI service
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [MIDI_SERVICE_UUID] }],
+                    optionalServices: [MIDI_SERVICE_UUID]
+                });
+                
+                log(`Найдено устройство: ${device.name || 'Без имени'}`, 'success');
+                document.getElementById('deviceName').textContent = device.name || 'Unknown';
+                
+                // Listen for disconnection
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                // Connect to GATT server
+                log('Подключение к GATT серверу...', 'info');
+                server = await device.gatt.connect();
+                
+                // Get MIDI service
+                log('Получение MIDI сервиса...', 'info');
+                service = await server.getPrimaryService(MIDI_SERVICE_UUID);
+                
+                // Get MIDI characteristic
+                log('Получение MIDI характеристики...', 'info');
+                characteristic = await service.getCharacteristic(MIDI_CHARACTERISTIC_UUID);
+                
+                log('Успешно подключено!', 'success');
+                updateStatus(true);
+                
+            } catch (error) {
+                log(`Ошибка: ${error.message}`, 'error');
+                updateStatus(false);
+                device = null;
+                server = null;
+                service = null;
+                characteristic = null;
+            }
+        }
+
+        function onDisconnected() {
+            log('Устройство отключено', 'error');
+            updateStatus(false);
+            device = null;
+            server = null;
+            service = null;
+            characteristic = null;
+        }
+
+        async function disconnectDevice() {
+            if (device && device.gatt.connected) {
+                device.gatt.disconnect();
+                log('Отключено от устройства', 'info');
+            }
+            updateStatus(false);
+        }
+
+        async function writeCharacteristic() {
+            if (!characteristic) {
+                log('Характеристика недоступна', 'error');
+                return;
+            }
+            
+            try {
+                const input = document.getElementById('writeValue').value.trim();
+                
+                // Parse hex string to bytes
+                const hexValues = input.split(/\s+/);
+                const bytes = new Uint8Array(hexValues.length);
+                
+                for (let i = 0; i < hexValues.length; i++) {
+                    const byte = parseInt(hexValues[i], 16);
+                    if (isNaN(byte) || byte < 0 || byte > 255) {
+                        throw new Error(`Неверное hex значение: ${hexValues[i]}`);
+                    }
+                    bytes[i] = byte;
+                }
+                
+                log(`Запись: [${Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}]`, 'info');
+                
+                // BLE MIDI packet format: timestamp header + timestamp + midi bytes
+                // Simple format: 0x80 (timestamp header) + 0x80 (timestamp) + midi data
+                const midiPacket = new Uint8Array(2 + bytes.length);
+                midiPacket[0] = 0x80; // Timestamp header
+                midiPacket[1] = 0x80; // Timestamp byte
+                midiPacket.set(bytes, 2);
+                
+                await characteristic.writeValueWithoutResponse(midiPacket);
+                
+                log('Данные успешно записаны!', 'success');
+                
+            } catch (error) {
+                log(`Ошибка записи: ${error.message}`, 'error');
+            }
+        }
+
+        // Check Web Bluetooth support
+        if (!navigator.bluetooth) {
+            log('Web Bluetooth не поддерживается в этом браузере!', 'error');
+            document.getElementById('connectBtn').disabled = true;
+        }
+    </script>
+</body>
+</html>
