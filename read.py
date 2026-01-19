@@ -44,10 +44,14 @@ class MIDIService(Service):
 
     def read_value(self):
         """Читает значение из характеристики, если оно изменилось."""
-        current = bytes(self._midi_io)
-        if current != self._last_value and len(current) > 0:
-            self._last_value = current
-            return current
+        try:
+            current = bytes(self._midi_io)
+            if current != self._last_value and len(current) > 0:
+                self._last_value = current
+                return current
+        except Exception as e:
+            # Игнорируем ошибки чтения (характеристика может быть пустой)
+            pass
         return None
 
     def write_value(self, data):
@@ -80,8 +84,13 @@ def _process_midi_message(midi_data):
     elif message_type == 0x90 and len(midi_data) >= 3:
         note = midi_data[1]
         velocity = midi_data[2]
-        print(f"  Note On: канал={channel}, нота={note}, velocity={velocity}")
-        controller.send_note_on(note, velocity, channel)
+        # Note On с velocity=0 эквивалентен Note Off
+        if velocity == 0:
+            print(f"  Note Off (via Note On): канал={channel}, нота={note}")
+            controller.send_note_off(note, 0, channel)
+        else:
+            print(f"  Note On: канал={channel}, нота={note}, velocity={velocity}")
+            controller.send_note_on(note, velocity, channel)
     
     # Control Change (0xB0-0xBF)
     elif message_type == 0xB0 and len(midi_data) >= 3:
@@ -111,7 +120,6 @@ def _process_midi_message(midi_data):
         pressure = midi_data[2]
         print(f"  Aftertouch: канал={channel}, нота={note}, давление={pressure}")
         # Послекасание обычно отправляется как Control Change или игнорируется
-        # Можно добавить отдельную функцию в controller при необходимости
     
     # Channel Pressure / Aftertouch (0xD0-0xDF)
     elif message_type == 0xD0 and len(midi_data) >= 2:
@@ -121,7 +129,7 @@ def _process_midi_message(midi_data):
     
     else:
         # Неизвестный или необработанный тип сообщения
-        print(f"  Необработанное MIDI сообщение: тип=0x{message_type:02X}, канал={channel}")
+        print(f"  Необработанное MIDI сообщение: тип=0x{message_type:02X}, канал={channel}, данные={[hex(b) for b in midi_data]}")
 
 
 # Глобальные переменные для BLE
@@ -169,26 +177,43 @@ def process_ble_messages():
     if not ble.connected:
         return
     
-    # Читаем новое значение из характеристики
-    received = midi_service.read_value()
-    
-    if received is not None:
-        # Выводим полученные байты в hex формате
-        hex_str = " ".join(f"{b:02X}" for b in received)
-        print(f"Получено: [{hex_str}]")
+    try:
+        # Читаем новое значение из характеристики
+        received = midi_service.read_value()
         
-        # Парсим BLE MIDI пакет
-        # Формат: timestamp_header (1 byte) + timestamp (1 byte) + midi_data
-        if len(received) >= 3:
-            timestamp_header = received[0]
-            timestamp = received[1]
-            midi_data = received[2:]
+        if received is not None and len(received) > 0:
+            # Выводим полученные байты в hex формате
+            hex_str = " ".join(f"{b:02X}" for b in received)
+            print(f"Получено BLE: [{hex_str}]")
             
-            midi_hex = " ".join(f"{b:02X}" for b in midi_data)
-            print(f"MIDI данные: [{midi_hex}]")
+            # Парсим BLE MIDI пакет
+            # Формат BLE MIDI: timestamp_header (1 byte) + timestamp (1 byte) + midi_data
+            # Но данные могут приходить и без заголовка, просто как MIDI данные
+            midi_data = None
             
-            # Обрабатываем MIDI сообщения и отправляем в USB MIDI
-            _process_midi_message(midi_data)
+            if len(received) >= 3:
+                # Проверяем, есть ли timestamp заголовок
+                # BLE MIDI заголовок обычно начинается с 0x80
+                if received[0] & 0x80 == 0x80:
+                    # Есть timestamp заголовок
+                    timestamp_header = received[0]
+                    timestamp = received[1]
+                    midi_data = received[2:]
+                else:
+                    # Нет заголовка, это просто MIDI данные
+                    midi_data = received
+            elif len(received) >= 1:
+                # Короткий пакет, возможно просто MIDI данные
+                midi_data = received
+            
+            if midi_data is not None and len(midi_data) > 0:
+                midi_hex = " ".join(f"{b:02X}" for b in midi_data)
+                print(f"MIDI данные: [{midi_hex}]")
+                
+                # Обрабатываем MIDI сообщения и отправляем в USB MIDI
+                _process_midi_message(midi_data)
+    except Exception as e:
+        print(f"Ошибка при обработке BLE сообщения: {e}")
 
 
 def run_ble_loop():
