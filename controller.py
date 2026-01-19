@@ -235,6 +235,43 @@ def example_chords():
         send_note_off(note)
 
 
+def run_examples_once():
+    """Запускает все примеры использования MIDI один раз."""
+    if midi is None:
+        print("Ошибка: MIDI не инициализирован. Запустите init_midi() сначала.")
+        return
+    
+    print("\n" + "="*50)
+    print("USB MIDI Controller - Примеры использования (один раз)")
+    print("="*50)
+    
+    try:
+        # Запускаем примеры по очереди
+        example_sequence()
+        time.sleep(1)
+        
+        example_control_change()
+        time.sleep(1)
+        
+        example_pitch_bend()
+        time.sleep(1)
+        
+        # example_program_change()
+        # time.sleep(1)
+        
+        example_chords()
+        time.sleep(1)
+        
+        print("\n" + "="*50)
+        print("Примеры завершены")
+        print("="*50)
+        
+    except Exception as e:
+        print(f"\nОшибка: {e}")
+        import traceback
+        traceback.print_exception(e, e, e.__traceback__)
+
+
 def run_examples():
     """Запускает все примеры использования MIDI в бесконечном цикле."""
     if midi is None:

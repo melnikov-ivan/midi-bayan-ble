@@ -10,6 +10,7 @@ from adafruit_ble.services import Service
 from adafruit_ble.uuid import VendorUUID
 from adafruit_ble.characteristics import Characteristic
 from adafruit_ble.characteristics.stream import StreamIn
+import controller
 
 
 # Определяем кастомный MIDI сервис
@@ -54,68 +55,165 @@ class MIDIService(Service):
         self._midi_io = data
 
 
-# Создаём экземпляр сервиса
-midi_service = MIDIService()
+def _process_midi_message(midi_data):
+    """
+    Обрабатывает MIDI сообщение и отправляет его в USB MIDI через controller.
+    
+    Параметры:
+    - midi_data: байты MIDI данных (без timestamp заголовка)
+    """
+    if len(midi_data) < 1:
+        return
+    
+    status_byte = midi_data[0]
+    message_type = status_byte & 0xF0
+    channel = status_byte & 0x0F
+    
+    # Note Off (0x80-0x8F)
+    if message_type == 0x80 and len(midi_data) >= 3:
+        note = midi_data[1]
+        velocity = midi_data[2]
+        print(f"  Note Off: канал={channel}, нота={note}, velocity={velocity}")
+        controller.send_note_off(note, velocity, channel)
+    
+    # Note On (0x90-0x9F)
+    elif message_type == 0x90 and len(midi_data) >= 3:
+        note = midi_data[1]
+        velocity = midi_data[2]
+        print(f"  Note On: канал={channel}, нота={note}, velocity={velocity}")
+        controller.send_note_on(note, velocity, channel)
+    
+    # Control Change (0xB0-0xBF)
+    elif message_type == 0xB0 and len(midi_data) >= 3:
+        control = midi_data[1]
+        value = midi_data[2]
+        print(f"  Control Change: канал={channel}, контроллер={control}, значение={value}")
+        controller.send_control_change(control, value, channel)
+    
+    # Program Change (0xC0-0xCF)
+    elif message_type == 0xC0 and len(midi_data) >= 2:
+        program = midi_data[1]
+        print(f"  Program Change: канал={channel}, программа={program}")
+        controller.send_program_change(program, channel)
+    
+    # Pitch Bend (0xE0-0xEF)
+    elif message_type == 0xE0 and len(midi_data) >= 3:
+        # Pitch bend: 14-bit value, LSB first
+        lsb = midi_data[1]
+        msb = midi_data[2]
+        value = (msb << 7) | lsb
+        print(f"  Pitch Bend: канал={channel}, значение={value}")
+        controller.send_pitch_bend(value, channel)
+    
+    # Polyphonic Key Pressure / Aftertouch (0xA0-0xAF)
+    elif message_type == 0xA0 and len(midi_data) >= 3:
+        note = midi_data[1]
+        pressure = midi_data[2]
+        print(f"  Aftertouch: канал={channel}, нота={note}, давление={pressure}")
+        # Послекасание обычно отправляется как Control Change или игнорируется
+        # Можно добавить отдельную функцию в controller при необходимости
+    
+    # Channel Pressure / Aftertouch (0xD0-0xDF)
+    elif message_type == 0xD0 and len(midi_data) >= 2:
+        pressure = midi_data[1]
+        print(f"  Channel Aftertouch: канал={channel}, давление={pressure}")
+        # Послекасание обычно отправляется как Control Change или игнорируется
+    
+    else:
+        # Неизвестный или необработанный тип сообщения
+        print(f"  Необработанное MIDI сообщение: тип=0x{message_type:02X}, канал={channel}")
 
-# Настраиваем BLE радио
-ble = adafruit_ble.BLERadio()
-ble.name = "MIDI Bayan"  # Имя устройства
 
-# Отключаем существующие соединения
-if ble.connected:
-    for connection in ble.connections:
-        connection.disconnect()
+# Глобальные переменные для BLE
+midi_service = None
+ble = None
+advertisement = None
 
-# Создаём рекламное объявление с нашим сервисом
-advertisement = ProvideServicesAdvertisement(midi_service)
 
-print("Запуск BLE рекламы...")
-print(f"Имя устройства: {ble.name}")
-ble.start_advertising(advertisement)
-
-while True:
-    print("Ожидание подключения...")
-
-    while not ble.connected:
-        pass
-
-    print("Клиент подключился!")
-
-    while ble.connected:
-        # Читаем новое значение из характеристики
-        received = midi_service.read_value()
-
-        if received is not None:
-            # Выводим полученные байты в hex формате
-            hex_str = " ".join(f"{b:02X}" for b in received)
-            print(f"Получено: [{hex_str}]")
-
-            # Парсим BLE MIDI пакет
-            # Формат: timestamp_header (1 byte) + timestamp (1 byte) + midi_data
-            if len(received) >= 3:
-                timestamp_header = received[0]
-                timestamp = received[1]
-                midi_data = received[2:]
-
-                midi_hex = " ".join(f"{b:02X}" for b in midi_data)
-                print(f"MIDI данные: [{midi_hex}]")
-
-                # Пример: если это Note On (0x9n)
-                if len(midi_data) >= 3 and (midi_data[0] & 0xF0) == 0x90:
-                    channel = midi_data[0] & 0x0F
-                    note = midi_data[1]
-                    velocity = midi_data[2]
-                    print(f"  Note On: канал={channel}, нота={note}, velocity={velocity}")
-
-                # Пример: если это Note Off (0x8n)
-                elif len(midi_data) >= 3 and (midi_data[0] & 0xF0) == 0x80:
-                    channel = midi_data[0] & 0x0F
-                    note = midi_data[1]
-                    velocity = midi_data[2]
-                    print(f"  Note Off: канал={channel}, нота={note}, velocity={velocity}")
-
-        time.sleep(0.01)  # Небольшая задержка
-
-    print("Клиент отключился")
-    print("Перезапуск рекламы...")
+def init_ble():
+    """Инициализирует BLE MIDI сервис и начинает рекламу."""
+    global midi_service, ble, advertisement
+    
+    # Создаём экземпляр сервиса
+    midi_service = MIDIService()
+    
+    # Настраиваем BLE радио
+    ble = adafruit_ble.BLERadio()
+    ble.name = "MIDI Bayan"  # Имя устройства
+    
+    # Отключаем существующие соединения
+    if ble.connected:
+        for connection in ble.connections:
+            connection.disconnect()
+    
+    # Создаём рекламное объявление с нашим сервисом
+    advertisement = ProvideServicesAdvertisement(midi_service)
+    
+    print("Запуск BLE рекламы...")
+    print(f"Имя устройства: {ble.name}")
     ble.start_advertising(advertisement)
+    return True
+
+
+def process_ble_messages():
+    """
+    Обрабатывает входящие BLE MIDI сообщения.
+    Должна вызываться периодически в основном цикле.
+    """
+    global midi_service, ble, advertisement
+    
+    if midi_service is None or ble is None:
+        return
+    
+    # Если не подключен, просто возвращаемся
+    if not ble.connected:
+        return
+    
+    # Читаем новое значение из характеристики
+    received = midi_service.read_value()
+    
+    if received is not None:
+        # Выводим полученные байты в hex формате
+        hex_str = " ".join(f"{b:02X}" for b in received)
+        print(f"Получено: [{hex_str}]")
+        
+        # Парсим BLE MIDI пакет
+        # Формат: timestamp_header (1 byte) + timestamp (1 byte) + midi_data
+        if len(received) >= 3:
+            timestamp_header = received[0]
+            timestamp = received[1]
+            midi_data = received[2:]
+            
+            midi_hex = " ".join(f"{b:02X}" for b in midi_data)
+            print(f"MIDI данные: [{midi_hex}]")
+            
+            # Обрабатываем MIDI сообщения и отправляем в USB MIDI
+            _process_midi_message(midi_data)
+
+
+def run_ble_loop():
+    """
+    Запускает основной цикл обработки BLE подключений.
+    Для использования в отдельном потоке или как основной цикл.
+    """
+    global ble, advertisement
+    
+    if ble is None:
+        print("Ошибка: BLE не инициализирован. Вызовите init_ble() сначала.")
+        return
+    
+    while True:
+        print("Ожидание подключения...")
+        
+        while not ble.connected:
+            time.sleep(0.1)
+        
+        print("Клиент подключился!")
+        
+        while ble.connected:
+            process_ble_messages()
+            time.sleep(0.01)  # Небольшая задержка
+        
+        print("Клиент отключился")
+        print("Перезапуск рекламы...")
+        ble.start_advertising(advertisement)
