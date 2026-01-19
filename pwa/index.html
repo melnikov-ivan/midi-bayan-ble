@@ -291,6 +291,35 @@
             opacity: 0.5;
         }
 
+        select.select-input {
+            width: 100%;
+            padding: 14px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+            padding-right: 40px;
+        }
+
+        select.select-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        select.select-input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .log-container {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
@@ -419,6 +448,15 @@
             </div>
             
             <div class="input-group">
+                <label>Выбор инструмента</label>
+                <select id="instrumentSelect" class="select-input" onchange="changeInstrument()" disabled>
+                    <option value="">Выберите инструмент</option>
+                    <option value="piano">Пианино</option>
+                    <option value="guitar">Гитара</option>
+                </select>
+            </div>
+            
+            <div class="input-group">
                 <label>Значение для записи (hex байты через пробел)</label>
                 <div class="input-row">
                     <input type="text" id="writeValue" placeholder="90 3C 7F" value="90 3C 7F">
@@ -483,6 +521,7 @@
             const connectBtn = document.getElementById('connectBtn');
             const writeBtn = document.getElementById('writeBtn');
             const deviceInfo = document.getElementById('deviceInfo');
+            const instrumentSelect = document.getElementById('instrumentSelect');
             
             dot.classList.remove('connected', 'connecting');
             
@@ -499,6 +538,7 @@
                 connectBtn.disabled = false;
                 connectBtn.onclick = disconnectDevice;
                 writeBtn.disabled = false;
+                instrumentSelect.disabled = false;
                 deviceInfo.style.display = 'block';
             } else {
                 text.textContent = 'Не подключено';
@@ -508,6 +548,7 @@
                 connectBtn.disabled = false;
                 connectBtn.onclick = connectDevice;
                 writeBtn.disabled = true;
+                instrumentSelect.disabled = true;
                 deviceInfo.style.display = 'none';
             }
         }
@@ -571,6 +612,58 @@
             updateStatus(false);
         }
 
+        async function sendMidiCommand(midiBytes) {
+            if (!characteristic) {
+                log('Характеристика недоступна', 'error');
+                return;
+            }
+            
+            try {
+                // BLE MIDI packet format: timestamp header + timestamp + midi bytes
+                // Simple format: 0x80 (timestamp header) + 0x80 (timestamp) + midi data
+                const midiPacket = new Uint8Array(2 + midiBytes.length);
+                midiPacket[0] = 0x80; // Timestamp header
+                midiPacket[1] = 0x80; // Timestamp byte
+                midiPacket.set(midiBytes, 2);
+                
+                await characteristic.writeValueWithoutResponse(midiPacket);
+                
+                log(`MIDI команда отправлена: [${Array.from(midiBytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}]`, 'success');
+                
+            } catch (error) {
+                log(`Ошибка отправки MIDI команды: ${error.message}`, 'error');
+            }
+        }
+
+        async function changeInstrument() {
+            const select = document.getElementById('instrumentSelect');
+            const instrument = select.value;
+            
+            if (!instrument) {
+                return;
+            }
+            
+            // MIDI Program Change command
+            // Status byte: 0xC0 (Program Change on channel 1)
+            // Program number: 0 = Piano (Acoustic Grand Piano), 24 = Guitar (Acoustic Guitar nylon)
+            let programNumber;
+            let instrumentName;
+            
+            if (instrument === 'piano') {
+                programNumber = 0;
+                instrumentName = 'Пианино';
+            } else if (instrument === 'guitar') {
+                programNumber = 24;
+                instrumentName = 'Гитара';
+            } else {
+                return;
+            }
+            
+            const midiBytes = new Uint8Array([0xC0, programNumber]);
+            log(`Смена инструмента на: ${instrumentName}`, 'info');
+            await sendMidiCommand(midiBytes);
+        }
+
         async function writeCharacteristic() {
             if (!characteristic) {
                 log('Характеристика недоступна', 'error');
@@ -594,16 +687,7 @@
                 
                 log(`Запись: [${Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}]`, 'info');
                 
-                // BLE MIDI packet format: timestamp header + timestamp + midi bytes
-                // Simple format: 0x80 (timestamp header) + 0x80 (timestamp) + midi data
-                const midiPacket = new Uint8Array(2 + bytes.length);
-                midiPacket[0] = 0x80; // Timestamp header
-                midiPacket[1] = 0x80; // Timestamp byte
-                midiPacket.set(bytes, 2);
-                
-                await characteristic.writeValueWithoutResponse(midiPacket);
-                
-                log('Данные успешно записаны!', 'success');
+                await sendMidiCommand(bytes);
                 
             } catch (error) {
                 log(`Ошибка записи: ${error.message}`, 'error');
